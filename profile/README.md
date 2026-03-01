@@ -1,16 +1,5 @@
 # Quanta
 
-A modular, event-driven, multi-tenant e-commerce platform built for MSMEs.
+A modern, scalable e-commerce platform purpose-built for MSMEs.
 
-## Repositories
-
-| Repo | Description |
-|------|-------------|
-| `collider-api` | Backend API |
-| `electron-ui` | Storefront |
-| `nucleus-ui` | Admin panel |
-| `pulse-worker` | Background processor |
-| `lattice-ui-kit` | Shared UI components |
-| `boson-client` | API client |
-| `infra` | Infrastructure & CI/CD |
-| `docs` | Documentation |
+Quanta helps small and medium businesses launch, manage, and grow their online stores with enterprise-grade capabilities — multi-tenant architecture, real-time inventory, automated order workflows, and integrated messaging — all at a fraction of the cost.
