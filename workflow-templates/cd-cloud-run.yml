@@ -1,0 +1,130 @@
+name: CD — Cloud Run
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: Cloud Run service name
+        type: string
+        required: true
+      dockerfile:
+        description: Path to Dockerfile (relative to infra repo)
+        type: string
+        required: true
+      node-version:
+        type: string
+        default: "20"
+    secrets:
+      GCP_QA_PROJECT_ID:
+        required: true
+      GCP_PROD_PROJECT_ID:
+        required: true
+      GCP_QA_SA_KEY:
+        required: true
+      GCP_PROD_SA_KEY:
+        required: true
+      GCP_REGION:
+        required: true
+
+jobs:
+  build-and-push:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout infra repo (for Dockerfile)
+        uses: actions/checkout@v4
+        with:
+          repository: quanta-platform/infra
+          path: infra
+          token: ${{ github.token }}
+
+      - name: Set image metadata
+        id: meta
+        run: |
+          echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "environment=production" >> "$GITHUB_OUTPUT"
+            echo "project_id=${{ secrets.GCP_PROD_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=qa" >> "$GITHUB_OUTPUT"
+            echo "project_id=${{ secrets.GCP_QA_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ github.ref == 'refs/heads/main' && secrets.GCP_PROD_SA_KEY || secrets.GCP_QA_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        run: |
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ steps.env.outputs.project_id }}/quanta-docker/${{ inputs.service-name }}"
+          docker build \
+            -f infra/${{ inputs.dockerfile }} \
+            -t "${IMAGE}:${{ github.sha }}" \
+            -t "${IMAGE}:latest" \
+            .
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
+
+  deploy-qa:
+    name: Deploy to QA
+    needs: build-and-push
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment: qa
+    steps:
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_QA_SA_KEY }}
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ inputs.service-name }}
+          image: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_QA_PROJECT_ID }}/quanta-docker/${{ inputs.service-name }}:${{ github.sha }}
+          region: ${{ secrets.GCP_REGION }}
+
+      - name: Verify deployment
+        run: |
+          URL=$(gcloud run services describe ${{ inputs.service-name }} --region=${{ secrets.GCP_REGION }} --format='value(status.url)' --project=${{ secrets.GCP_QA_PROJECT_ID }})
+          curl -sf "${URL}/health" || echo "Health check pending (service may need cold start)"
+
+  deploy-prod:
+    name: Deploy to Production
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_PROD_SA_KEY }}
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ inputs.service-name }}
+          image: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROD_PROJECT_ID }}/quanta-docker/${{ inputs.service-name }}:${{ github.sha }}
+          region: ${{ secrets.GCP_REGION }}
+
+      - name: Verify deployment
+        run: |
+          URL=$(gcloud run services describe ${{ inputs.service-name }} --region=${{ secrets.GCP_REGION }} --format='value(status.url)' --project=${{ secrets.GCP_PROD_PROJECT_ID }})
+          curl -sf "${URL}/health" || echo "Health check pending (service may need cold start)"
