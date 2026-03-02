@@ -8,9 +8,9 @@ on:
         type: string
         required: true
       dockerfile:
-        description: Path to Dockerfile (relative to infra repo)
+        description: Path to Dockerfile (relative to repo root)
         type: string
-        required: true
+        default: "Dockerfile"
       node-version:
         type: string
         default: "20"
@@ -34,13 +34,6 @@ jobs:
       image-tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Checkout infra repo (for Dockerfile)
-        uses: actions/checkout@v4
-        with:
-          repository: quanta-platform/infra
-          path: infra
-          token: ${{ github.token }}
 
       - name: Set image metadata
         id: meta
@@ -74,7 +67,7 @@ jobs:
         run: |
           IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ steps.env.outputs.project_id }}/quanta-docker/${{ inputs.service-name }}"
           docker build \
-            -f infra/${{ inputs.dockerfile }} \
+            -f ${{ inputs.dockerfile }} \
             -t "${IMAGE}:${{ github.sha }}" \
             -t "${IMAGE}:latest" \
             .
