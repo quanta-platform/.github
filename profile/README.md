@@ -59,7 +59,7 @@ Strict data isolation between stores, role-based access control, and industry-st
 
 Interested in Quanta for your business? Have questions or feedback?
 
-📧 Reach out at **hello@quanta-platform.com**
+📧 Reach out at **TBD**
 
 <br>
 
