@@ -6,6 +6,10 @@ on:
       node-version:
         type: string
         default: "22"
+      run-integration-tests:
+        description: "Run integration tests (pnpm test:integration) after unit tests"
+        type: boolean
+        default: false
 
 jobs:
   ci:
@@ -27,8 +31,12 @@ jobs:
       - name: Lint (type-check)
         run: pnpm lint
 
-      - name: Test
+      - name: Unit tests
         run: pnpm test --passWithNoTests
+
+      - name: Integration tests
+        if: inputs.run-integration-tests
+        run: pnpm test:integration --passWithNoTests
 
       - name: Build
         run: pnpm build
