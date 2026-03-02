@@ -153,6 +153,7 @@ jobs:
         id: e2e-status
         with:
           github-token: ${{ steps.app-token.outputs.token }}
+          result-encoding: string
           script: |
             // Poll the e2e-tests repo for a workflow run triggered by our dispatch
             const owner = 'quanta-platform';
@@ -180,7 +181,7 @@ jobs:
 
             if (!runId) {
               core.setFailed('Could not find e2e workflow run after dispatch');
-              return;
+              return 'failure';
             }
 
             core.info(`Found e2e run: ${runId}`);
@@ -194,12 +195,10 @@ jobs:
               if (run.status === 'completed') {
                 if (run.conclusion === 'success') {
                   core.info('E2E tests passed');
-                  core.setOutput('result', 'success');
-                  return;
+                  return 'success';
                 } else {
                   core.setFailed(`E2E tests failed: ${run.conclusion}`);
-                  core.setOutput('result', 'failure');
-                  return;
+                  return 'failure';
                 }
               }
 
@@ -208,6 +207,7 @@ jobs:
             }
 
             core.setFailed('E2E tests timed out after 30 minutes');
+            return 'failure';
 
       - uses: actions/checkout@v4
         if: steps.e2e-status.outputs.result == 'success'
