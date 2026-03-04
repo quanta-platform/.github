@@ -29,6 +29,23 @@ on:
         required: false
       APP_PRIVATE_KEY:
         required: false
+      # Firebase client config (public values, passed as build args for Next.js)
+      FIREBASE_QA_API_KEY:
+        required: false
+      FIREBASE_QA_AUTH_DOMAIN:
+        required: false
+      FIREBASE_QA_PROJECT_ID:
+        required: false
+      FIREBASE_PROD_API_KEY:
+        required: false
+      FIREBASE_PROD_AUTH_DOMAIN:
+        required: false
+      FIREBASE_PROD_PROJECT_ID:
+        required: false
+      QA_API_URL:
+        required: false
+      PROD_API_URL:
+        required: false
 
 jobs:
   build-and-push:
@@ -51,9 +68,17 @@ jobs:
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "environment=production" >> "$GITHUB_OUTPUT"
             echo "project_id=${{ secrets.GCP_PROD_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_api_key=${{ secrets.FIREBASE_PROD_API_KEY }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_auth_domain=${{ secrets.FIREBASE_PROD_AUTH_DOMAIN }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_project_id=${{ secrets.FIREBASE_PROD_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+            echo "api_url=${{ secrets.PROD_API_URL }}" >> "$GITHUB_OUTPUT"
           else
             echo "environment=qa" >> "$GITHUB_OUTPUT"
             echo "project_id=${{ secrets.GCP_QA_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_api_key=${{ secrets.FIREBASE_QA_API_KEY }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_auth_domain=${{ secrets.FIREBASE_QA_AUTH_DOMAIN }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_project_id=${{ secrets.FIREBASE_QA_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+            echo "api_url=${{ secrets.QA_API_URL }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Authenticate to GCP
@@ -72,6 +97,10 @@ jobs:
           IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ steps.env.outputs.project_id }}/quanta-docker/${{ inputs.service-name }}"
           docker build \
             -f ${{ inputs.dockerfile }} \
+            --build-arg NEXT_PUBLIC_FIREBASE_API_KEY="${{ steps.env.outputs.firebase_api_key }}" \
+            --build-arg NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="${{ steps.env.outputs.firebase_auth_domain }}" \
+            --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID="${{ steps.env.outputs.firebase_project_id }}" \
+            --build-arg NEXT_PUBLIC_API_URL="${{ steps.env.outputs.api_url }}" \
             -t "${IMAGE}:${{ github.sha }}" \
             -t "${IMAGE}:latest" \
             .
