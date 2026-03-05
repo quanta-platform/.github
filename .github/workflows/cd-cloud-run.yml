@@ -14,6 +14,10 @@ on:
       node-version:
         type: string
         default: "22"
+      skip-e2e:
+        description: Skip E2E test trigger after QA deploy
+        type: boolean
+        default: false
     secrets:
       GCP_QA_PROJECT_ID:
         required: false
@@ -25,7 +29,26 @@ on:
         required: false
       GCP_REGION:
         required: false
-      E2E_DISPATCH_TOKEN:
+      APP_ID:
+        required: false
+      APP_PRIVATE_KEY:
+        required: false
+      # Firebase client config (public values, passed as build args for Next.js)
+      FIREBASE_QA_API_KEY:
+        required: false
+      FIREBASE_QA_AUTH_DOMAIN:
+        required: false
+      FIREBASE_QA_PROJECT_ID:
+        required: false
+      FIREBASE_PROD_API_KEY:
+        required: false
+      FIREBASE_PROD_AUTH_DOMAIN:
+        required: false
+      FIREBASE_PROD_PROJECT_ID:
+        required: false
+      QA_API_URL:
+        required: false
+      PROD_API_URL:
         required: false
 
 jobs:
@@ -49,9 +72,17 @@ jobs:
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "environment=production" >> "$GITHUB_OUTPUT"
             echo "project_id=${{ secrets.GCP_PROD_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_api_key=${{ secrets.FIREBASE_PROD_API_KEY }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_auth_domain=${{ secrets.FIREBASE_PROD_AUTH_DOMAIN }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_project_id=${{ secrets.FIREBASE_PROD_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+            echo "api_url=${{ secrets.PROD_API_URL }}" >> "$GITHUB_OUTPUT"
           else
             echo "environment=qa" >> "$GITHUB_OUTPUT"
             echo "project_id=${{ secrets.GCP_QA_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_api_key=${{ secrets.FIREBASE_QA_API_KEY }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_auth_domain=${{ secrets.FIREBASE_QA_AUTH_DOMAIN }}" >> "$GITHUB_OUTPUT"
+            echo "firebase_project_id=${{ secrets.FIREBASE_QA_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
+            echo "api_url=${{ secrets.QA_API_URL }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Authenticate to GCP
@@ -65,16 +96,27 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push image
-        run: |
-          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ steps.env.outputs.project_id }}/quanta-docker/${{ inputs.service-name }}"
-          docker build \
-            -f ${{ inputs.dockerfile }} \
-            -t "${IMAGE}:${{ github.sha }}" \
-            -t "${IMAGE}:latest" \
-            .
-          docker push "${IMAGE}:${{ github.sha }}"
-          docker push "${IMAGE}:latest"
+        uses: docker/build-push-action@v6
+        env:
+          IMAGE: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ steps.env.outputs.project_id }}/quanta-docker/${{ inputs.service-name }}
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          build-args: |
+            NEXT_PUBLIC_FIREBASE_API_KEY=${{ steps.env.outputs.firebase_api_key }}
+            NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${{ steps.env.outputs.firebase_auth_domain }}
+            NEXT_PUBLIC_FIREBASE_PROJECT_ID=${{ steps.env.outputs.firebase_project_id }}
+            NEXT_PUBLIC_API_URL=${{ steps.env.outputs.api_url }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
 
   deploy-qa:
     name: Deploy to QA
@@ -105,13 +147,22 @@ jobs:
   trigger-e2e:
     name: Trigger E2E Tests
     needs: deploy-qa
-    if: github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/develop' && inputs.skip-e2e != true
     runs-on: ubuntu-latest
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: quanta-platform
+          repositories: e2e-tests
+
       - name: Dispatch e2e tests
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.E2E_DISPATCH_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           repository: quanta-platform/e2e-tests
           event-type: run-e2e
           client-payload: |
@@ -129,11 +180,20 @@ jobs:
     if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: quanta-platform
+
       - name: Wait for e2e results
         uses: actions/github-script@v7
         id: e2e-status
         with:
-          github-token: ${{ secrets.E2E_DISPATCH_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
+          result-encoding: string
           script: |
             // Poll the e2e-tests repo for a workflow run triggered by our dispatch
             const owner = 'quanta-platform';
@@ -161,7 +221,7 @@ jobs:
 
             if (!runId) {
               core.setFailed('Could not find e2e workflow run after dispatch');
-              return;
+              return 'failure';
             }
 
             core.info(`Found e2e run: ${runId}`);
@@ -175,12 +235,10 @@ jobs:
               if (run.status === 'completed') {
                 if (run.conclusion === 'success') {
                   core.info('E2E tests passed');
-                  core.setOutput('result', 'success');
-                  return;
+                  return 'success';
                 } else {
                   core.setFailed(`E2E tests failed: ${run.conclusion}`);
-                  core.setOutput('result', 'failure');
-                  return;
+                  return 'failure';
                 }
               }
 
@@ -189,6 +247,7 @@ jobs:
             }
 
             core.setFailed('E2E tests timed out after 30 minutes');
+            return 'failure';
 
       - uses: actions/checkout@v4
         if: steps.e2e-status.outputs.result == 'success'
@@ -199,7 +258,7 @@ jobs:
         if: steps.e2e-status.outputs.result == 'success'
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.E2E_DISPATCH_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
