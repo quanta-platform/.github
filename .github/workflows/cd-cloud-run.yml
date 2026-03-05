@@ -14,6 +14,10 @@ on:
       node-version:
         type: string
         default: "22"
+      skip-e2e:
+        description: Skip E2E test trigger after QA deploy
+        type: boolean
+        default: false
     secrets:
       GCP_QA_PROJECT_ID:
         required: false
@@ -92,20 +96,27 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push image
-        run: |
-          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ steps.env.outputs.project_id }}/quanta-docker/${{ inputs.service-name }}"
-          docker build \
-            -f ${{ inputs.dockerfile }} \
-            --build-arg NEXT_PUBLIC_FIREBASE_API_KEY="${{ steps.env.outputs.firebase_api_key }}" \
-            --build-arg NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="${{ steps.env.outputs.firebase_auth_domain }}" \
-            --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID="${{ steps.env.outputs.firebase_project_id }}" \
-            --build-arg NEXT_PUBLIC_API_URL="${{ steps.env.outputs.api_url }}" \
-            -t "${IMAGE}:${{ github.sha }}" \
-            -t "${IMAGE}:latest" \
-            .
-          docker push "${IMAGE}:${{ github.sha }}"
-          docker push "${IMAGE}:latest"
+        uses: docker/build-push-action@v6
+        env:
+          IMAGE: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ steps.env.outputs.project_id }}/quanta-docker/${{ inputs.service-name }}
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          build-args: |
+            NEXT_PUBLIC_FIREBASE_API_KEY=${{ steps.env.outputs.firebase_api_key }}
+            NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${{ steps.env.outputs.firebase_auth_domain }}
+            NEXT_PUBLIC_FIREBASE_PROJECT_ID=${{ steps.env.outputs.firebase_project_id }}
+            NEXT_PUBLIC_API_URL=${{ steps.env.outputs.api_url }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
 
   deploy-qa:
     name: Deploy to QA
@@ -136,7 +147,7 @@ jobs:
   trigger-e2e:
     name: Trigger E2E Tests
     needs: deploy-qa
-    if: github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/develop' && inputs.skip-e2e != true
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App token
