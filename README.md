@@ -6,19 +6,21 @@ Organization profile and shared CI/CD workflows for Quanta Platform.
 
 ### Production (deploys from `main`)
 
-| Service    | URL                              |
-|------------|----------------------------------|
-| Storefront | https://pandamaatru.com          |
-| API        | https://api.pandamaatru.com      |
-| Admin      | https://admin.pandamaatru.com    |
+| Service    | URL                                  |
+|------------|--------------------------------------|
+| Marketing  | https://pandamaatru.com              |
+| Storefront | https://{slug}.pandamaatru.com       |
+| API        | https://api.pandamaatru.com          |
+| Admin      | https://admin.pandamaatru.com        |
 
 ### QA (deploys from `develop`)
 
-| Service    | URL                              |
-|------------|----------------------------------|
-| Storefront | https://qa.pandamaatru.com       |
-| API        | https://qa-api.pandamaatru.com   |
-| Admin      | https://qa-admin.pandamaatru.com |
+| Service    | URL                                  |
+|------------|--------------------------------------|
+| Marketing  | https://qa.pandamaatru.com           |
+| Storefront | https://{slug}.pandamaatru.com       |
+| API        | https://qa-api.pandamaatru.com       |
+| Admin      | https://qa-admin.pandamaatru.com     |
 
 ### Health Checks
 
