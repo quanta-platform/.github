@@ -18,6 +18,10 @@ on:
         description: Skip E2E test trigger after QA deploy
         type: boolean
         default: false
+      skip-promote:
+        description: Skip the promote-to-main job (E2E polling + auto-merge)
+        type: boolean
+        default: true
     secrets:
       GCP_QA_PROJECT_ID:
         required: false
@@ -177,7 +181,7 @@ jobs:
   promote-to-main:
     name: Create PR to Main
     needs: trigger-e2e
-    if: github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/develop' && inputs.skip-promote != true
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App token
