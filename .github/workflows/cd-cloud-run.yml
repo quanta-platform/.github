@@ -50,6 +50,8 @@ on:
         required: false
       PROD_API_URL:
         required: false
+      STOREFRONT_REVALIDATE_SECRET:
+        required: false
 
 jobs:
   build-and-push:
