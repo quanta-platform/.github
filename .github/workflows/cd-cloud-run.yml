@@ -52,6 +52,16 @@ on:
         required: false
       STOREFRONT_REVALIDATE_SECRET:
         required: false
+      # Storefront's /api/revalidate endpoint URL — used by the API service
+      # to bust the storefront's ISR cache when tenant config / homepage /
+      # catalog changes. Environment-specific because each env's storefront
+      # has its own Cloud Run hostname. Without these set correctly the
+      # storefront keeps serving stale config for an hour after every save
+      # (silent 404 in API logs — bug that hit QA pre-2026-05-12).
+      QA_STOREFRONT_REVALIDATE_URL:
+        required: false
+      PROD_STOREFRONT_REVALIDATE_URL:
+        required: false
 
 jobs:
   build-and-push:
@@ -138,6 +148,20 @@ jobs:
           service: ${{ inputs.service-name }}
           image: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_QA_PROJECT_ID }}/quanta-docker/${{ inputs.service-name }}:${{ github.sha }}
           region: ${{ secrets.GCP_REGION }}
+          # Update only these specific env vars; everything else on the
+          # service is preserved. Only the API service reads these — the
+          # admin/storefront/marketing services ignore them harmlessly.
+          # Driven by repo-level GitHub Secrets:
+          #   QA_STOREFRONT_REVALIDATE_URL    — QA storefront /api/revalidate
+          #   STOREFRONT_REVALIDATE_SECRET    — HMAC secret (shared QA + prod)
+          # If a secret is unset the env var still gets written as an
+          # empty string and the API logs a one-time warning (cache
+          # invalidation disabled) — safer than silently shipping the
+          # wrong URL.
+          env_vars: |
+            STOREFRONT_REVALIDATE_URL=${{ secrets.QA_STOREFRONT_REVALIDATE_URL }}
+            STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}
+          env_vars_update_strategy: merge
 
       - name: Verify deployment
         id: verify
@@ -330,6 +354,15 @@ jobs:
           service: ${{ inputs.service-name }}
           image: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROD_PROJECT_ID }}/quanta-docker/${{ inputs.service-name }}:${{ github.sha }}
           region: ${{ secrets.GCP_REGION }}
+          # Same pattern as deploy-qa — only difference is the PROD
+          # variant of the storefront URL secret. See deploy-qa for
+          # rationale; this is the prod-side bug-prevention that
+          # ensures prod never ships with the silent-404 misconfig
+          # QA had pre-2026-05-12.
+          env_vars: |
+            STOREFRONT_REVALIDATE_URL=${{ secrets.PROD_STOREFRONT_REVALIDATE_URL }}
+            STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}
+          env_vars_update_strategy: merge
 
       - name: Verify deployment
         run: |
