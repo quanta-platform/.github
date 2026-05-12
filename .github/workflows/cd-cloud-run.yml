@@ -148,20 +148,34 @@ jobs:
           service: ${{ inputs.service-name }}
           image: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_QA_PROJECT_ID }}/quanta-docker/${{ inputs.service-name }}:${{ github.sha }}
           region: ${{ secrets.GCP_REGION }}
-          # Update only these specific env vars; everything else on the
-          # service is preserved. Only the API service reads these — the
-          # admin/storefront/marketing services ignore them harmlessly.
-          # Driven by repo-level GitHub Secrets:
-          #   QA_STOREFRONT_REVALIDATE_URL    — QA storefront /api/revalidate
-          #   STOREFRONT_REVALIDATE_SECRET    — HMAC secret (shared QA + prod)
-          # If a secret is unset the env var still gets written as an
-          # empty string and the API logs a one-time warning (cache
-          # invalidation disabled) — safer than silently shipping the
-          # wrong URL.
-          env_vars: |
-            STOREFRONT_REVALIDATE_URL=${{ secrets.QA_STOREFRONT_REVALIDATE_URL }}
-            STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}
-          env_vars_update_strategy: merge
+
+      # Set the storefront-cache env vars in a separate step so we can
+      # skip writing when the secret is unset. The deploy-cloudrun
+      # action's `env_vars` would otherwise write an empty string and
+      # blow away the hand-set value that's currently keeping QA
+      # marquee invalidation working. Once the secret IS set at the
+      # repo level the step takes over and the value is managed as
+      # IaC. This is the "harmless if not configured" pattern we
+      # want for new ops capabilities.
+      - name: Update storefront cache env vars (if secrets configured)
+        if: ${{ secrets.QA_STOREFRONT_REVALIDATE_URL != '' || secrets.STOREFRONT_REVALIDATE_SECRET != '' }}
+        run: |
+          UPDATES=()
+          if [ -n "${{ secrets.QA_STOREFRONT_REVALIDATE_URL }}" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_URL=${{ secrets.QA_STOREFRONT_REVALIDATE_URL }}")
+          fi
+          if [ -n "${{ secrets.STOREFRONT_REVALIDATE_SECRET }}" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}")
+          fi
+          if [ ${#UPDATES[@]} -gt 0 ]; then
+            IFS=','
+            gcloud run services update ${{ inputs.service-name }} \
+              --project=${{ secrets.GCP_QA_PROJECT_ID }} \
+              --region=${{ secrets.GCP_REGION }} \
+              --update-env-vars="${UPDATES[*]}" \
+              --quiet
+            echo "Updated storefront-cache env vars on ${{ inputs.service-name }}"
+          fi
 
       - name: Verify deployment
         id: verify
@@ -354,15 +368,30 @@ jobs:
           service: ${{ inputs.service-name }}
           image: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROD_PROJECT_ID }}/quanta-docker/${{ inputs.service-name }}:${{ github.sha }}
           region: ${{ secrets.GCP_REGION }}
-          # Same pattern as deploy-qa — only difference is the PROD
-          # variant of the storefront URL secret. See deploy-qa for
-          # rationale; this is the prod-side bug-prevention that
-          # ensures prod never ships with the silent-404 misconfig
-          # QA had pre-2026-05-12.
-          env_vars: |
-            STOREFRONT_REVALIDATE_URL=${{ secrets.PROD_STOREFRONT_REVALIDATE_URL }}
-            STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}
-          env_vars_update_strategy: merge
+
+      # Mirror of deploy-qa: skip the env var update when the secret
+      # is unset, so the workflow is safe to merge before the secrets
+      # are configured at the repo level. Once configured the env
+      # vars are managed by this step on every deploy.
+      - name: Update storefront cache env vars (if secrets configured)
+        if: ${{ secrets.PROD_STOREFRONT_REVALIDATE_URL != '' || secrets.STOREFRONT_REVALIDATE_SECRET != '' }}
+        run: |
+          UPDATES=()
+          if [ -n "${{ secrets.PROD_STOREFRONT_REVALIDATE_URL }}" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_URL=${{ secrets.PROD_STOREFRONT_REVALIDATE_URL }}")
+          fi
+          if [ -n "${{ secrets.STOREFRONT_REVALIDATE_SECRET }}" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}")
+          fi
+          if [ ${#UPDATES[@]} -gt 0 ]; then
+            IFS=','
+            gcloud run services update ${{ inputs.service-name }} \
+              --project=${{ secrets.GCP_PROD_PROJECT_ID }} \
+              --region=${{ secrets.GCP_REGION }} \
+              --update-env-vars="${UPDATES[*]}" \
+              --quiet
+            echo "Updated storefront-cache env vars on ${{ inputs.service-name }}"
+          fi
 
       - name: Verify deployment
         run: |
