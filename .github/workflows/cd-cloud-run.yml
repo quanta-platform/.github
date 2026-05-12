@@ -1,6 +1,14 @@
 name: CD — Cloud Run
 
 on:
+  # paths-ignore: ['**'] declares a `push` event handler that never
+  # actually matches any change. Without this, GitHub treats every
+  # push to this file (only ever invoked via workflow_call from api/
+  # admin/etc) as "no jobs ran → failed" and emails a false-alarm
+  # notification. Silences the noise while keeping the reusable-
+  # workflow contract intact.
+  push:
+    paths-ignore: ['**']
   workflow_call:
     inputs:
       service-name:
