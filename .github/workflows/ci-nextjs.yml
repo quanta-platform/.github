@@ -1,10 +1,6 @@
 name: CI — Next.js
 
 on:
-  # See cd-cloud-run.yml for rationale — silences the "no jobs ran"
-  # email when this reusable workflow file itself is edited.
-  push:
-    paths-ignore: ['**']
   workflow_call:
     inputs:
       node-version:
