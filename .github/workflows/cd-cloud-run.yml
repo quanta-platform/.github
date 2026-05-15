@@ -171,25 +171,31 @@ jobs:
       # repo level the step takes over and the value is managed as
       # IaC. This is the "harmless if not configured" pattern we
       # want for new ops capabilities.
+      # GitHub Actions forbids `secrets.*` in step-level `if:` expressions.
+      # Always run the step; the script no-ops when both secrets are empty.
       - name: Update storefront cache env vars (if secrets configured)
-        if: ${{ secrets.QA_STOREFRONT_REVALIDATE_URL != '' || secrets.STOREFRONT_REVALIDATE_SECRET != '' }}
+        env:
+          REVALIDATE_URL: ${{ secrets.QA_STOREFRONT_REVALIDATE_URL }}
+          REVALIDATE_SECRET: ${{ secrets.STOREFRONT_REVALIDATE_SECRET }}
         run: |
           UPDATES=()
-          if [ -n "${{ secrets.QA_STOREFRONT_REVALIDATE_URL }}" ]; then
-            UPDATES+=("STOREFRONT_REVALIDATE_URL=${{ secrets.QA_STOREFRONT_REVALIDATE_URL }}")
+          if [ -n "$REVALIDATE_URL" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_URL=$REVALIDATE_URL")
           fi
-          if [ -n "${{ secrets.STOREFRONT_REVALIDATE_SECRET }}" ]; then
-            UPDATES+=("STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}")
+          if [ -n "$REVALIDATE_SECRET" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_SECRET=$REVALIDATE_SECRET")
           fi
-          if [ ${#UPDATES[@]} -gt 0 ]; then
-            IFS=','
-            gcloud run services update ${{ inputs.service-name }} \
-              --project=${{ secrets.GCP_QA_PROJECT_ID }} \
-              --region=${{ secrets.GCP_REGION }} \
-              --update-env-vars="${UPDATES[*]}" \
-              --quiet
-            echo "Updated storefront-cache env vars on ${{ inputs.service-name }}"
+          if [ ${#UPDATES[@]} -eq 0 ]; then
+            echo "Both storefront-cache secrets unset, skipping env var update"
+            exit 0
           fi
+          IFS=','
+          gcloud run services update ${{ inputs.service-name }} \
+            --project=${{ secrets.GCP_QA_PROJECT_ID }} \
+            --region=${{ secrets.GCP_REGION }} \
+            --update-env-vars="${UPDATES[*]}" \
+            --quiet
+          echo "Updated storefront-cache env vars on ${{ inputs.service-name }}"
 
       - name: Verify deployment
         id: verify
@@ -388,24 +394,28 @@ jobs:
       # are configured at the repo level. Once configured the env
       # vars are managed by this step on every deploy.
       - name: Update storefront cache env vars (if secrets configured)
-        if: ${{ secrets.PROD_STOREFRONT_REVALIDATE_URL != '' || secrets.STOREFRONT_REVALIDATE_SECRET != '' }}
+        env:
+          REVALIDATE_URL: ${{ secrets.PROD_STOREFRONT_REVALIDATE_URL }}
+          REVALIDATE_SECRET: ${{ secrets.STOREFRONT_REVALIDATE_SECRET }}
         run: |
           UPDATES=()
-          if [ -n "${{ secrets.PROD_STOREFRONT_REVALIDATE_URL }}" ]; then
-            UPDATES+=("STOREFRONT_REVALIDATE_URL=${{ secrets.PROD_STOREFRONT_REVALIDATE_URL }}")
+          if [ -n "$REVALIDATE_URL" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_URL=$REVALIDATE_URL")
           fi
-          if [ -n "${{ secrets.STOREFRONT_REVALIDATE_SECRET }}" ]; then
-            UPDATES+=("STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}")
+          if [ -n "$REVALIDATE_SECRET" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_SECRET=$REVALIDATE_SECRET")
           fi
-          if [ ${#UPDATES[@]} -gt 0 ]; then
-            IFS=','
-            gcloud run services update ${{ inputs.service-name }} \
-              --project=${{ secrets.GCP_PROD_PROJECT_ID }} \
-              --region=${{ secrets.GCP_REGION }} \
-              --update-env-vars="${UPDATES[*]}" \
-              --quiet
-            echo "Updated storefront-cache env vars on ${{ inputs.service-name }}"
+          if [ ${#UPDATES[@]} -eq 0 ]; then
+            echo "Both storefront-cache secrets unset, skipping env var update"
+            exit 0
           fi
+          IFS=','
+          gcloud run services update ${{ inputs.service-name }} \
+            --project=${{ secrets.GCP_PROD_PROJECT_ID }} \
+            --region=${{ secrets.GCP_REGION }} \
+            --update-env-vars="${UPDATES[*]}" \
+            --quiet
+          echo "Updated storefront-cache env vars on ${{ inputs.service-name }}"
 
       - name: Verify deployment
         run: |
