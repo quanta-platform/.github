@@ -54,6 +54,25 @@ on:
         required: false
       PROD_API_URL:
         required: false
+      # imgproxy CDN base URL (per-env). Empty / unset = client bundle
+      # falls back to bare GCS URLs (no resize, no AVIF/WebP). Set
+      # after the imgproxy Cloud Run service is provisioned.
+      QA_IMGPROXY_URL:
+        required: false
+      PROD_IMGPROXY_URL:
+        required: false
+      STOREFRONT_REVALIDATE_SECRET:
+        required: false
+      # Storefront's /api/revalidate endpoint URL — used by the API service
+      # to bust the storefront's ISR cache when tenant config / homepage /
+      # catalog changes. Environment-specific because each env's storefront
+      # has its own Cloud Run hostname. Without these set correctly the
+      # storefront keeps serving stale config for an hour after every save
+      # (silent 404 in API logs — bug that hit QA pre-2026-05-12).
+      QA_STOREFRONT_REVALIDATE_URL:
+        required: false
+      PROD_STOREFRONT_REVALIDATE_URL:
+        required: false
 
 jobs:
   build-and-push:
@@ -80,6 +99,7 @@ jobs:
             echo "firebase_auth_domain=${{ secrets.FIREBASE_PROD_AUTH_DOMAIN }}" >> "$GITHUB_OUTPUT"
             echo "firebase_project_id=${{ secrets.FIREBASE_PROD_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
             echo "api_url=${{ secrets.PROD_API_URL }}" >> "$GITHUB_OUTPUT"
+            echo "imgproxy_url=${{ secrets.PROD_IMGPROXY_URL }}" >> "$GITHUB_OUTPUT"
           else
             echo "environment=qa" >> "$GITHUB_OUTPUT"
             echo "project_id=${{ secrets.GCP_QA_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
@@ -87,6 +107,7 @@ jobs:
             echo "firebase_auth_domain=${{ secrets.FIREBASE_QA_AUTH_DOMAIN }}" >> "$GITHUB_OUTPUT"
             echo "firebase_project_id=${{ secrets.FIREBASE_QA_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
             echo "api_url=${{ secrets.QA_API_URL }}" >> "$GITHUB_OUTPUT"
+            echo "imgproxy_url=${{ secrets.QA_IMGPROXY_URL }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Authenticate to GCP
@@ -119,6 +140,7 @@ jobs:
             NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${{ steps.env.outputs.firebase_auth_domain }}
             NEXT_PUBLIC_FIREBASE_PROJECT_ID=${{ steps.env.outputs.firebase_project_id }}
             NEXT_PUBLIC_API_URL=${{ steps.env.outputs.api_url }}
+            NEXT_PUBLIC_IMGPROXY_URL=${{ steps.env.outputs.imgproxy_url }}
           cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
 
@@ -140,6 +162,34 @@ jobs:
           service: ${{ inputs.service-name }}
           image: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_QA_PROJECT_ID }}/quanta-docker/${{ inputs.service-name }}:${{ github.sha }}
           region: ${{ secrets.GCP_REGION }}
+
+      # Set the storefront-cache env vars in a separate step so we can
+      # skip writing when the secret is unset. The deploy-cloudrun
+      # action's `env_vars` would otherwise write an empty string and
+      # blow away the hand-set value that's currently keeping QA
+      # marquee invalidation working. Once the secret IS set at the
+      # repo level the step takes over and the value is managed as
+      # IaC. This is the "harmless if not configured" pattern we
+      # want for new ops capabilities.
+      - name: Update storefront cache env vars (if secrets configured)
+        if: ${{ secrets.QA_STOREFRONT_REVALIDATE_URL != '' || secrets.STOREFRONT_REVALIDATE_SECRET != '' }}
+        run: |
+          UPDATES=()
+          if [ -n "${{ secrets.QA_STOREFRONT_REVALIDATE_URL }}" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_URL=${{ secrets.QA_STOREFRONT_REVALIDATE_URL }}")
+          fi
+          if [ -n "${{ secrets.STOREFRONT_REVALIDATE_SECRET }}" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}")
+          fi
+          if [ ${#UPDATES[@]} -gt 0 ]; then
+            IFS=','
+            gcloud run services update ${{ inputs.service-name }} \
+              --project=${{ secrets.GCP_QA_PROJECT_ID }} \
+              --region=${{ secrets.GCP_REGION }} \
+              --update-env-vars="${UPDATES[*]}" \
+              --quiet
+            echo "Updated storefront-cache env vars on ${{ inputs.service-name }}"
+          fi
 
       - name: Verify deployment
         id: verify
@@ -332,6 +382,30 @@ jobs:
           service: ${{ inputs.service-name }}
           image: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROD_PROJECT_ID }}/quanta-docker/${{ inputs.service-name }}:${{ github.sha }}
           region: ${{ secrets.GCP_REGION }}
+
+      # Mirror of deploy-qa: skip the env var update when the secret
+      # is unset, so the workflow is safe to merge before the secrets
+      # are configured at the repo level. Once configured the env
+      # vars are managed by this step on every deploy.
+      - name: Update storefront cache env vars (if secrets configured)
+        if: ${{ secrets.PROD_STOREFRONT_REVALIDATE_URL != '' || secrets.STOREFRONT_REVALIDATE_SECRET != '' }}
+        run: |
+          UPDATES=()
+          if [ -n "${{ secrets.PROD_STOREFRONT_REVALIDATE_URL }}" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_URL=${{ secrets.PROD_STOREFRONT_REVALIDATE_URL }}")
+          fi
+          if [ -n "${{ secrets.STOREFRONT_REVALIDATE_SECRET }}" ]; then
+            UPDATES+=("STOREFRONT_REVALIDATE_SECRET=${{ secrets.STOREFRONT_REVALIDATE_SECRET }}")
+          fi
+          if [ ${#UPDATES[@]} -gt 0 ]; then
+            IFS=','
+            gcloud run services update ${{ inputs.service-name }} \
+              --project=${{ secrets.GCP_PROD_PROJECT_ID }} \
+              --region=${{ secrets.GCP_REGION }} \
+              --update-env-vars="${UPDATES[*]}" \
+              --quiet
+            echo "Updated storefront-cache env vars on ${{ inputs.service-name }}"
+          fi
 
       - name: Verify deployment
         run: |
