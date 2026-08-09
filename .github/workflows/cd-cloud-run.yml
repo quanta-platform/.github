@@ -422,48 +422,9 @@ jobs:
           URL=$(gcloud run services describe ${{ inputs.service-name }} --region=${{ secrets.GCP_REGION }} --format='value(status.url)' --project=${{ secrets.GCP_PROD_PROJECT_ID }})
           curl -sf "${URL}/health" || echo "Health check pending (service may need cold start)"
 
-  cleanup-images:
-    name: Cleanup Old Images
-    needs: [deploy-qa, deploy-prod]
-    if: always() && (needs.deploy-qa.result == 'success' || needs.deploy-prod.result == 'success')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Determine environment
-        id: env
-        run: |
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "project_id=${{ secrets.GCP_PROD_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "project_id=${{ secrets.GCP_QA_PROJECT_ID }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Authenticate to GCP
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ github.ref == 'refs/heads/main' && secrets.GCP_PROD_SA_KEY || secrets.GCP_QA_SA_KEY }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Purge old images (keep 3 most recent)
-        run: |
-          REPO="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ steps.env.outputs.project_id }}/quanta-docker/${{ inputs.service-name }}"
-
-          # List all tags sorted by upload time (newest first), skip 'latest'
-          TAGS=$(gcloud artifacts docker tags list "${REPO}" \
-            --sort-by="~UPDATE_TIME" \
-            --format="value(tag)" \
-            --filter="tag != latest" 2>/dev/null || true)
-
-          # Keep the 3 most recent, delete the rest
-          COUNT=0
-          while IFS= read -r TAG; do
-            [ -z "${TAG}" ] && continue
-            COUNT=$((COUNT + 1))
-            if [ "${COUNT}" -gt 3 ]; then
-              echo "Deleting old image: ${REPO}:${TAG}"
-              gcloud artifacts docker images delete "${REPO}:${TAG}" --quiet --delete-tags 2>/dev/null || true
-            fi
-          done <<< "${TAGS}"
-
-          echo "Cleanup complete. Kept 3 most recent tags + latest."
+  # Image retention is handled server-side by Artifact Registry cleanup
+  # policies on the quanta-docker repos (QA: keep 5 newest per package,
+  # delete >7d; prod: keep 10 newest, delete >30d; `latest` and
+  # `buildcache` tags always kept). Do not re-add a CI cleanup job: the
+  # deployer SA has no artifactregistry delete permissions, so the old
+  # job spent 15-20 min per deploy failing silently on every delete.
