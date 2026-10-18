@@ -62,7 +62,8 @@ jobs:
 
 `ci-nextjs.yml`
 - `run-unit-tests` (default `true`) — runs `pnpm test` (`vitest run`) before the build. Set `false` only as a temporary escape hatch.
-- `test-timezone` (default `UTC`) — `TZ` for the tests. Suites are kept timezone-independent; this just pins CI.
+- `test-timezone` (default `Asia/Kolkata`, our users' zone) — `TZ` for the tests. Suites are kept timezone-independent; this just pins CI.
+- Only the calling repo is checked out, so admin's cross-repo checks against the api (feature-flag catalog coverage etc.) skip in CI.
 
 `ci-nestjs.yml` already runs `pnpm test` (Jest), plus `pnpm test:integration` when `run-integration-tests: true`.
 

@@ -12,11 +12,12 @@ on:
         default: true
       test-timezone:
         description: >-
-          TZ for the unit tests. Suites are expected to be timezone-independent
-          (admin + storefront pass under UTC, Asia/Kolkata and America/Los_Angeles);
-          pinning it keeps CI reproducible rather than relying on the runner image.
+          TZ for the unit tests — our users' zone by default. Suites are kept
+          timezone-independent (admin + storefront pass under UTC, Asia/Kolkata
+          and America/Los_Angeles); pinning it keeps CI reproducible rather than
+          relying on the runner image's zone.
         type: string
-        default: "UTC"
+        default: "Asia/Kolkata"
 
 jobs:
   ci:
@@ -39,8 +40,12 @@ jobs:
         run: pnpm lint
 
       # `pnpm test` is `vitest run` in admin and storefront (single pass, no
-      # watch). Tests that cross-read a sibling repo (api) skip themselves when
-      # it isn't checked out, which it never is here.
+      # watch). Only this repo is checked out here, so admin's checks against
+      # the api's sources/migrations (feature-flag catalog coverage, flag-usage
+      # freshness, the design-catalogue cross-reads) are skipped in CI and run
+      # only on a machine with the api beside admin or QUANTA_API_DIR set.
+      # Follow-up: sparse-checkout api/src/database/migrations so the catalog
+      # coverage guard is enforced here.
       - name: Unit tests
         if: inputs.run-unit-tests
         env:
