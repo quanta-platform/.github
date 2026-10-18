@@ -6,10 +6,22 @@ on:
       node-version:
         type: string
         default: "22"
+      run-unit-tests:
+        description: "Run the app's unit tests (pnpm test — Vitest, non-watch) before the build"
+        type: boolean
+        default: true
+      test-timezone:
+        description: >-
+          TZ for the unit tests — our users' zone by default. Suites are kept
+          timezone-independent (admin + storefront pass under UTC, Asia/Kolkata
+          and America/Los_Angeles); pinning it keeps CI reproducible rather than
+          relying on the runner image's zone.
+        type: string
+        default: "Asia/Kolkata"
 
 jobs:
   ci:
-    name: Lint, Build
+    name: Lint, Test, Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +38,20 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+
+      # `pnpm test` is `vitest run` in admin and storefront (single pass, no
+      # watch). Only this repo is checked out here, so admin's checks against
+      # the api's sources/migrations (feature-flag catalog coverage, flag-usage
+      # freshness, the design-catalogue cross-reads) are skipped in CI and run
+      # only on a machine with the api beside admin or QUANTA_API_DIR set.
+      # Follow-up: sparse-checkout api/src/database/migrations so the catalog
+      # coverage guard is enforced here.
+      - name: Unit tests
+        if: inputs.run-unit-tests
+        env:
+          TZ: ${{ inputs.test-timezone }}
+          CI: "true"
+        run: pnpm test
 
       - name: Build
         run: pnpm build

@@ -22,6 +22,25 @@ on:
         description: Skip the promote-to-main job (E2E polling + auto-merge)
         type: boolean
         default: true
+      # Database migrations as a Cloud Run Job, run BEFORE the new revision is
+      # deployed (see the "Run database migrations" steps below). Opt-in: only
+      # the api sets it.
+      run-migrations:
+        description: Run DB migrations (Cloud Run Job `<service-name>-migrate`, same image) before deploying; a failure aborts the deploy
+        type: boolean
+        default: false
+      migrate-args:
+        description: Comma-separated args for `node` in the migrate job (gcloud --args format)
+        type: string
+        default: "dist/database/migrate.js"
+      migrate-database-secret:
+        description: >-
+          Secret Manager secret mounted as DATABASE_URL in the migrate job. Defaults to the
+          SAME secret the api service reads, so the job can only ever migrate the database the
+          deployed code talks to; the api runner rewrites Neon's -pooler host to the direct
+          endpoint itself (advisory locks need a session, not PgBouncer).
+        type: string
+        default: "NEON_DATABASE_URL_POOLED"
     secrets:
       GCP_QA_PROJECT_ID:
         required: false
@@ -155,6 +174,56 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_QA_SA_KEY }}
+
+      # ── Migrations ────────────────────────────────────────────────
+      # Runs the just-pushed image as a one-off Cloud Run Job BEFORE the
+      # deploy step, so the new revision doesn't exist (and gets no traffic)
+      # until the schema it needs is in place; a failed migration fails this
+      # step and the deploy below never runs — the old revision keeps serving.
+      # Serialized three ways: one task, no retries, and the runner holds a
+      # pg_advisory_lock for the whole run (an execution left running by a
+      # cancelled workflow just makes the next one wait on the lock).
+      # Migrations must therefore be backward compatible with the revision
+      # still serving (expand → deploy → contract).
+      # Escape hatch / manual run: see the api repo's deploy.yml header.
+      - name: Set up Cloud SDK (migrations)
+        if: inputs.run-migrations
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run database migrations (Cloud Run Job)
+        if: inputs.run-migrations
+        timeout-minutes: 40
+        env:
+          PROJECT: ${{ secrets.GCP_QA_PROJECT_ID }}
+          REGION: ${{ secrets.GCP_REGION }}
+          SERVICE: ${{ inputs.service-name }}
+          DB_SECRET: ${{ inputs.migrate-database-secret }}
+          MIGRATE_ARGS: ${{ inputs.migrate-args }}
+        run: |
+          set -euo pipefail
+          JOB="${SERVICE}-migrate"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/quanta-docker/${SERVICE}:${GITHUB_SHA}"
+          # Same runtime identity as the service (TF: modules/cloud-run → <service>-sa),
+          # which already has secretmanager.secretAccessor on the project.
+          SA="${SERVICE}-sa@${PROJECT}.iam.gserviceaccount.com"
+
+          echo "Updating job ${JOB} → ${IMAGE}"
+          gcloud run jobs deploy "${JOB}" \
+            --project="${PROJECT}" --region="${REGION}" \
+            --image="${IMAGE}" \
+            --service-account="${SA}" \
+            --command=node --args="${MIGRATE_ARGS}" \
+            --set-secrets="DATABASE_URL=${DB_SECRET}:latest" \
+            --tasks=1 --parallelism=1 --max-retries=0 --task-timeout=30m \
+            --cpu=1 --memory=512Mi \
+            --labels="managed-by=github-actions,commit-sha=${GITHUB_SHA}" \
+            --quiet
+
+          echo "Executing ${JOB} (waits for completion)"
+          if ! gcloud run jobs execute "${JOB}" --project="${PROJECT}" --region="${REGION}" --wait --quiet; then
+            echo "::error title=Migrations failed::${JOB} failed — deploy aborted, the current revision is still serving. Logs: https://console.cloud.google.com/run/jobs/details/${REGION}/${JOB}/executions?project=${PROJECT}"
+            exit 1
+          fi
 
       - name: Deploy to Cloud Run
         uses: google-github-actions/deploy-cloudrun@v2
@@ -381,6 +450,56 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_PROD_SA_KEY }}
+
+      # ── Migrations ────────────────────────────────────────────────
+      # Runs the just-pushed image as a one-off Cloud Run Job BEFORE the
+      # deploy step, so the new revision doesn't exist (and gets no traffic)
+      # until the schema it needs is in place; a failed migration fails this
+      # step and the deploy below never runs — the old revision keeps serving.
+      # Serialized three ways: one task, no retries, and the runner holds a
+      # pg_advisory_lock for the whole run (an execution left running by a
+      # cancelled workflow just makes the next one wait on the lock).
+      # Migrations must therefore be backward compatible with the revision
+      # still serving (expand → deploy → contract).
+      # Escape hatch / manual run: see the api repo's deploy.yml header.
+      - name: Set up Cloud SDK (migrations)
+        if: inputs.run-migrations
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run database migrations (Cloud Run Job)
+        if: inputs.run-migrations
+        timeout-minutes: 40
+        env:
+          PROJECT: ${{ secrets.GCP_PROD_PROJECT_ID }}
+          REGION: ${{ secrets.GCP_REGION }}
+          SERVICE: ${{ inputs.service-name }}
+          DB_SECRET: ${{ inputs.migrate-database-secret }}
+          MIGRATE_ARGS: ${{ inputs.migrate-args }}
+        run: |
+          set -euo pipefail
+          JOB="${SERVICE}-migrate"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/quanta-docker/${SERVICE}:${GITHUB_SHA}"
+          # Same runtime identity as the service (TF: modules/cloud-run → <service>-sa),
+          # which already has secretmanager.secretAccessor on the project.
+          SA="${SERVICE}-sa@${PROJECT}.iam.gserviceaccount.com"
+
+          echo "Updating job ${JOB} → ${IMAGE}"
+          gcloud run jobs deploy "${JOB}" \
+            --project="${PROJECT}" --region="${REGION}" \
+            --image="${IMAGE}" \
+            --service-account="${SA}" \
+            --command=node --args="${MIGRATE_ARGS}" \
+            --set-secrets="DATABASE_URL=${DB_SECRET}:latest" \
+            --tasks=1 --parallelism=1 --max-retries=0 --task-timeout=30m \
+            --cpu=1 --memory=512Mi \
+            --labels="managed-by=github-actions,commit-sha=${GITHUB_SHA}" \
+            --quiet
+
+          echo "Executing ${JOB} (waits for completion)"
+          if ! gcloud run jobs execute "${JOB}" --project="${PROJECT}" --region="${REGION}" --wait --quiet; then
+            echo "::error title=Migrations failed::${JOB} failed — deploy aborted, the current revision is still serving. Logs: https://console.cloud.google.com/run/jobs/details/${REGION}/${JOB}/executions?project=${PROJECT}"
+            exit 1
+          fi
 
       - name: Deploy to Cloud Run
         uses: google-github-actions/deploy-cloudrun@v2
