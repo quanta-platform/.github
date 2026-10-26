@@ -266,6 +266,22 @@ jobs:
             --quiet
           echo "Updated storefront-cache env vars on ${{ inputs.service-name }}"
 
+      # The marketing site's /api/revalidate route checks the same HMAC secret
+      # the API signs with after a marketing-content save. Without it every
+      # save is rejected (503) and edits only appear after the 1h ISR window.
+      # Mounted from Secret Manager; the service account needs
+      # secretAccessor on it. A failure here leaves the previous revision
+      # serving, so warn instead of failing the deploy.
+      - name: Mount marketing revalidate secret
+        if: inputs.service-name == 'quanta-marketing'
+        run: |
+          gcloud run services update ${{ inputs.service-name }} \
+            --project=${{ secrets.GCP_QA_PROJECT_ID }} \
+            --region=${{ secrets.GCP_REGION }} \
+            --update-secrets="QUANTATECHSOFT_REVALIDATE_SECRET=QUANTATECHSOFT_REVALIDATE_SECRET:latest" \
+            --quiet \
+            || echo "::warning::Could not mount QUANTATECHSOFT_REVALIDATE_SECRET on ${{ inputs.service-name }} — marketing saves will not refresh the site immediately"
+
       - name: Verify deployment
         id: verify
         run: |
@@ -535,6 +551,22 @@ jobs:
             --update-env-vars="${UPDATES[*]}" \
             --quiet
           echo "Updated storefront-cache env vars on ${{ inputs.service-name }}"
+
+      # The marketing site's /api/revalidate route checks the same HMAC secret
+      # the API signs with after a marketing-content save. Without it every
+      # save is rejected (503) and edits only appear after the 1h ISR window.
+      # Mounted from Secret Manager; the service account needs
+      # secretAccessor on it. A failure here leaves the previous revision
+      # serving, so warn instead of failing the deploy.
+      - name: Mount marketing revalidate secret
+        if: inputs.service-name == 'quanta-marketing'
+        run: |
+          gcloud run services update ${{ inputs.service-name }} \
+            --project=${{ secrets.GCP_PROD_PROJECT_ID }} \
+            --region=${{ secrets.GCP_REGION }} \
+            --update-secrets="QUANTATECHSOFT_REVALIDATE_SECRET=QUANTATECHSOFT_REVALIDATE_SECRET:latest" \
+            --quiet \
+            || echo "::warning::Could not mount QUANTATECHSOFT_REVALIDATE_SECRET on ${{ inputs.service-name }} — marketing saves will not refresh the site immediately"
 
       - name: Verify deployment
         run: |
